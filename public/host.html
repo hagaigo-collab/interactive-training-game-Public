@@ -1,0 +1,202 @@
+<!doctype html>
+<html lang="he" dir="rtl">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>מסך מנחה – משחק הדרכה</title>
+  <link rel="stylesheet" href="/style.css" />
+  <!-- לקוח socket.io מקומי; אם לא נטען – נטען גיבוי בקוד -->
+  <script src="/socket.io/socket.io.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/html2canvas@1.4.1/dist/html2canvas.min.js"></script>
+</head>
+<body>
+  <div class="container">
+    <div class="header">
+      <h2 style="margin:0">מסך מנחה</h2>
+      <span class="meta">חדר: <span id="room-pill" class="pill">—</span></span>
+      <span class="meta copy-link">
+        <button id="copy-btn" class="button ghost">העתק קישור למשתתפים</button>
+        <span class="small" id="join-url"></span>
+      </span>
+    </div>
+
+    <div class="form">
+      <label for="question">שאלה להצגה:</label>
+      <input id="question" class="input" placeholder="כתבו כאן את השאלה" />
+      <button id="send-question" class="button">שלח שאלה</button>
+      <button id="export-png" class="button secondary">ייצוא PNG של הלוח</button>
+      <button id="new-room" class="button secondary">חדר חדש</button>
+    </div>
+
+    <!-- הוספת כותרות של המנחה -->
+    <div class="form" style="grid-template-columns: 1fr 2fr auto; margin-top:10px">
+      <label for="titleText">הוסף כותרת ללוח:</label>
+      <input id="titleText" class="input" placeholder="טקסט כותרת (למשל: רעיונות מרכזיים)" />
+      <button id="add-title" class="button">הוסף כותרת</button>
+    </div>
+
+    <div class="question" id="question-display">אין שאלה עדיין…</div>
+
+    <div>
+      <div id="board" class="board" aria-label="לוח תשובות"></div>
+      <p class="small">גררו מלבנים עם העכבר. שליחת שאלה חדשה מאפסת את הכל (כולל כותרות).</p>
+    </div>
+  </div>
+
+  <script>
+    (function(){
+      const log = (...a) => { try { console.log('[host]', ...a); } catch(e){} };
+
+      const board     = document.getElementById('board');
+      const roomPill  = document.getElementById('room-pill');
+      const joinUrlEl = document.getElementById('join-url');
+      const copyBtn   = document.getElementById('copy-btn');
+
+      // קוד חדר אם עבר ב-URL
+      let ROOM = new URL(location.href).searchParams.get('room') || '';
+      if (ROOM) {
+        roomPill.textContent = ROOM;
+        joinUrlEl.textContent = location.origin + '/join.html?room=' + encodeURIComponent(ROOM);
+      }
+
+      // אם לקוח socket.io לא נטען מהשרת – נטען מגיבוי CDN
+      function ensureIoLoaded() {
+        return new Promise((resolve) => {
+          if (typeof io !== 'undefined') return resolve();
+          const s = document.createElement('script');
+          s.src = 'https://cdn.socket.io/4.7.5/socket.io.min.js';
+          s.onload = () => resolve();
+          s.onerror = () => { log('socket.io client failed to load'); resolve(); };
+          document.head.appendChild(s);
+        });
+      }
+
+      // יצירת חדר אם אין אחד ב-URL
+      async function ensureRoom() {
+        if (ROOM) return ROOM;
+        try {
+          const res = await fetch('/api/new-room');
+          const data = await res.json();
+          ROOM = data.room;
+          const url = new URL(location.href);
+          url.searchParams.set('room', ROOM);
+          history.replaceState({}, '', url);
+          roomPill.textContent = ROOM;
+          joinUrlEl.textContent = location.origin + '/join.html?room=' + encodeURIComponent(ROOM);
+          return ROOM;
+        } catch (e) {
+          log('failed to fetch new room', e);
+          alert('בעיה ביצירת חדר. רעננו את הדף ונסו שוב.');
+        }
+      }
+
+      function participantLink(room){
+        return location.origin + '/join.html?room=' + encodeURIComponent(room);
+      }
+
+      let socket, Z = 1;
+
+      function createCard(it){
+        const el = document.createElement('div');
+        el.className = 'card' + (it.kind === 'title' ? ' title' : '');
+        el.id = 'item-' + it.id;
+        el.style.left = (it.x||0) + 'px';
+        el.style.top  = (it.y||0) + 'px';
+
+        if (it.kind === 'answer') {
+          if (it.bg)    el.style.background = it.bg;
+          if (it.color) el.style.color      = it.color;
+          const name = document.createElement('div');
+          name.className = 'name';         // פונט עבה יותר, ממורכז (מה-CSS)
+          name.textContent = it.name || '';
+          el.appendChild(name);
+        }
+
+        const p = document.createElement('p');
+        p.textContent = it.text || '';
+        el.appendChild(p);
+
+        enableDrag(el, it.id);
+        board.appendChild(el);
+      }
+
+      function clearCards(){ board.innerHTML = ''; }
+
+      function enableDrag(el, id){
+        let dragging=false, sx=0, sy=0, ox=0, oy=0;
+        const down = (e)=>{ dragging=true; el.setPointerCapture(e.pointerId); sx=e.clientX; sy=e.clientY; ox=parseInt(el.style.left)||0; oy=parseInt(el.style.top)||0; el.style.zIndex=(++Z)+''; };
+        const move = (e)=>{ if(!dragging) return; const dx=e.clientX-sx, dy=e.clientY-sy; const rect=board.getBoundingClientRect(), er=el.getBoundingClientRect(); let nx=ox+dx, ny=oy+dy; nx=Math.max(0,Math.min(rect.width-er.width,nx)); ny=Math.max(0,Math.min(rect.height-er.height,ny)); el.style.left=nx+'px'; el.style.top=ny+'px'; };
+        const up   = (e)=>{ if(!dragging) return; dragging=false; el.releasePointerCapture(e.pointerId); const x=parseInt(el.style.left)||0, y=parseInt(el.style.top)||0; socket.emit('moveItem', { room: ROOM, id, x, y }); };
+        el.addEventListener('pointerdown', down);
+        el.addEventListener('pointermove', move);
+        el.addEventListener('pointerup', up);
+        el.addEventListener('pointercancel', up);
+        el.addEventListener('lostpointercapture', up);
+      }
+
+      (async function init(){
+        await ensureIoLoaded();
+        await ensureRoom();
+        log('ROOM =', ROOM);
+
+        socket = io();
+        socket.emit('joinRoom', { room: ROOM, role: 'host' });
+
+        document.getElementById('send-question').addEventListener('click', function(){
+          const q = document.getElementById('question').value.trim();
+          socket.emit('setQuestion', { room: ROOM, question: q });
+          document.getElementById('question').value = '';
+        });
+
+        document.getElementById('add-title').addEventListener('click', function(){
+          const t = document.getElementById('titleText').value.trim();
+          if (!t) return;
+          socket.emit('addTitle', { room: ROOM, text: t });
+          document.getElementById('titleText').value = '';
+        });
+
+        document.getElementById('new-room').addEventListener('click', async function(){
+          ROOM = '';
+          await ensureRoom();
+        });
+
+        copyBtn.addEventListener('click', async function(){
+          try {
+            await navigator.clipboard.writeText(participantLink(ROOM));
+            copyBtn.textContent = 'הועתק!';
+            setTimeout(()=> copyBtn.textContent = 'העתק קישור למשתתפים', 1200);
+          } catch (e) {}
+        });
+
+        document.getElementById('export-png').addEventListener('click', async function(){
+          const node = document.getElementById('board');
+          const q = document.getElementById('question-display').textContent.trim();
+          const canvas = await html2canvas(node, { backgroundColor: '#ffffff', scale: 2 });
+          const link = document.createElement('a');
+          let name = 'board_' + ROOM + '_' + Date.now() + (q ? '_' + q.slice(0,30) : '') + '.png';
+          name = name.split(' ').join('_');
+          link.download = name;
+          link.href = canvas.toDataURL('image/png');
+          link.click();
+        });
+
+        socket.on('state', ({ question, items }) => {
+          document.getElementById('question-display').textContent = question || 'אין שאלה עדיין…';
+          clearCards(); (items||[]).forEach(createCard);
+        });
+
+        socket.on('question', (q) => {
+          document.getElementById('question-display').textContent = q || 'אין שאלה עדיין…';
+        });
+
+        socket.on('clearItems', clearCards);
+        socket.on('newItem', (it) => createCard(it));
+        socket.on('moveItem', ({id,x,y}) => {
+          const el = document.getElementById('item-'+id);
+          if (el) { el.style.left = x + 'px'; el.style.top = y + 'px'; }
+        });
+      })();
+    })();
+  </script>
+</body>
+</html>

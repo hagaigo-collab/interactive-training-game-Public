@@ -1,0 +1,94 @@
+<!doctype html>
+<html lang="he" dir="rtl">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>עמוד משתתף – משחק הדרכה</title>
+  <link rel="stylesheet" href="/style.css" />
+  <script src="/socket.io/socket.io.js"></script>
+</head>
+<body>
+  <div class="container">
+    <h2 style="margin:0">הצטרפות למשחק</h2>
+    <div class="form">
+      <label>קוד חדר:</label>
+      <input id="room" class="input" placeholder="לדוגמה: ABCD" />
+      <span></span>
+      <button id="join" class="button">הצטרפות</button>
+    </div>
+
+    <div class="question" id="question-display">ממתין לשאלה מהמנחה…</div>
+
+    <div class="form">
+      <div>
+        <label>שם (חובה)</label>
+        <input id="name" class="input" placeholder="הקלידו את השם שלכם" />
+      </div>
+      <div>
+        <label>צבע מלבן</label>
+        <input id="bg" type="color" class="input" value="#FFECB3" />
+      </div>
+      <div>
+        <label>צבע טקסט</label>
+        <input id="color" type="color" class="input" value="#000000" />
+      </div>
+      <input id="text" class="input" placeholder="כתבו כאן את התשובה שלכם" />
+      <button id="send" class="button">שלח תשובה</button>
+    </div>
+
+    <p class="small">שם הוא שדה חובה. אפשר לשלוח כמה תשובות שתרצו. כשנשלחת שאלה חדשה – הכל מתאפס.</p>
+  </div>
+
+  <script>
+    const socket = io();
+
+    function getParam(name) { return new URL(window.location.href).searchParams.get(name); }
+
+    let ROOM = '';
+    let NAME = localStorage.getItem('itg_name') || '';
+
+    function connect(room){
+      ROOM = (room || '').trim().toUpperCase();
+      if (!ROOM) return alert('נא להזין קוד חדר');
+      socket.emit('joinRoom', { room: ROOM, role: 'participant' });
+    }
+
+    (function init(){
+      const fromUrl = getParam('room');
+      if (fromUrl) {
+        document.getElementById('room').value = fromUrl;
+        connect(fromUrl);
+      }
+      if (NAME) document.getElementById('name').value = NAME;
+      document.getElementById('name').addEventListener('input', (e) => {
+        NAME = e.target.value.trim();
+        localStorage.setItem('itg_name', NAME);
+      });
+    })();
+
+    document.getElementById('join').addEventListener('click', () => {
+      const r = document.getElementById('room').value;
+      connect(r);
+    });
+
+    socket.on('question', (q) => {
+      document.getElementById('question-display').textContent = q || 'ממתין לשאלה מהמנחה…';
+    });
+
+    socket.on('clearItems', () => { /* no-op for participant */ });
+
+    document.getElementById('send').addEventListener('click', () => {
+      if (!ROOM) return alert('לא מחוברים לחדר');
+      const name = (document.getElementById('name').value || '').trim();
+      if (!name) return alert('שם הוא שדה חובה');
+      const text = (document.getElementById('text').value || '').trim();
+      if (!text) return;
+      const bg = document.getElementById('bg').value;
+      const color = document.getElementById('color').value;
+      socket.emit('submitAnswer', { room: ROOM, name, text, bg, color });
+      document.getElementById('text').value = '';
+      document.getElementById('text').focus();
+    });
+  </script>
+</body>
+</html>
