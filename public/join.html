@@ -13,17 +13,17 @@
     <div class="form">
       <label>קוד חדר:</label>
       <input id="room" class="input" placeholder="לדוגמה: ABCD" />
-      <span></span>
       <button id="join" class="button">הצטרפות</button>
+    </div>
+
+    <div class="form">
+      <label>שם המשתתף:</label>
+      <input id="name" class="input" placeholder="השם שלך" />
     </div>
 
     <div class="question" id="question-display">ממתין לשאלה מהמנחה…</div>
 
     <div class="form">
-      <div>
-        <label>שם (חובה)</label>
-        <input id="name" class="input" placeholder="הקלידו את השם שלכם" />
-      </div>
       <div>
         <label>צבע מלבן</label>
         <input id="bg" type="color" class="input" value="#FFECB3" />
@@ -36,19 +36,21 @@
       <button id="send" class="button">שלח תשובה</button>
     </div>
 
-    <p class="small">שם הוא שדה חובה. אפשר לשלוח כמה תשובות שתרצו. כשנשלחת שאלה חדשה – הכל מתאפס.</p>
+    <p class="small">אפשר לשלוח כמה תשובות שתרצו. כשיש שאלה חדשה – כל התשובות נמחקות.</p>
   </div>
 
   <script>
     const socket = io();
 
-    function getParam(name) { return new URL(window.location.href).searchParams.get(name); }
+    function getParam(name) {
+      const url = new URL(window.location.href);
+      return url.searchParams.get(name);
+    }
 
     let ROOM = '';
-    let NAME = localStorage.getItem('itg_name') || '';
 
     function connect(room){
-      ROOM = (room || '').trim().toUpperCase();
+      ROOM = room.trim().toUpperCase();
       if (!ROOM) return alert('נא להזין קוד חדר');
       socket.emit('joinRoom', { room: ROOM, role: 'participant' });
     }
@@ -59,11 +61,6 @@
         document.getElementById('room').value = fromUrl;
         connect(fromUrl);
       }
-      if (NAME) document.getElementById('name').value = NAME;
-      document.getElementById('name').addEventListener('input', (e) => {
-        NAME = e.target.value.trim();
-        localStorage.setItem('itg_name', NAME);
-      });
     })();
 
     document.getElementById('join').addEventListener('click', () => {
@@ -75,16 +72,18 @@
       document.getElementById('question-display').textContent = q || 'ממתין לשאלה מהמנחה…';
     });
 
-    socket.on('clearItems', () => { /* no-op for participant */ });
+    socket.on('clearItems', () => {
+      // אין לוח בצד משתתף, לא צריך למחוק
+    });
 
     document.getElementById('send').addEventListener('click', () => {
       if (!ROOM) return alert('לא מחוברים לחדר');
-      const name = (document.getElementById('name').value || '').trim();
-      if (!name) return alert('שם הוא שדה חובה');
-      const text = (document.getElementById('text').value || '').trim();
-      if (!text) return;
+      const text = document.getElementById('text').value.trim();
+      const name = document.getElementById('name').value.trim();
       const bg = document.getElementById('bg').value;
       const color = document.getElementById('color').value;
+      if (!name) return alert('נא להזין שם');
+      if (!text) return;
       socket.emit('submitAnswer', { room: ROOM, name, text, bg, color });
       document.getElementById('text').value = '';
       document.getElementById('text').focus();

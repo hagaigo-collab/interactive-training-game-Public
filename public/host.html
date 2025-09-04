@@ -5,7 +5,6 @@
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>מסך מנחה – משחק הדרכה</title>
   <link rel="stylesheet" href="/style.css" />
-  <!-- לקוח socket.io מקומי; אם לא נטען – נטען גיבוי בקוד -->
   <script src="/socket.io/socket.io.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/html2canvas@1.4.1/dist/html2canvas.min.js"></script>
 </head>
@@ -28,7 +27,7 @@
       <button id="new-room" class="button secondary">חדר חדש</button>
     </div>
 
-    <!-- הוספת כותרות של המנחה -->
+    <!-- כותרות של המנחה -->
     <div class="form" style="grid-template-columns: 1fr 2fr auto; margin-top:10px">
       <label for="titleText">הוסף כותרת ללוח:</label>
       <input id="titleText" class="input" placeholder="טקסט כותרת (למשל: רעיונות מרכזיים)" />
@@ -39,55 +38,45 @@
 
     <div>
       <div id="board" class="board" aria-label="לוח תשובות"></div>
-      <p class="small">גררו מלבנים עם העכבר. שליחת שאלה חדשה מאפסת את הכל (כולל כותרות).</p>
+      <p class="small">גררו מלבנים עם העכבר. שליחת שאלה חדשה מאפסת את הלוח.</p>
     </div>
   </div>
 
   <script>
     (function(){
-      const log = (...a) => { try { console.log('[host]', ...a); } catch(e){} };
-
       const board     = document.getElementById('board');
       const roomPill  = document.getElementById('room-pill');
       const joinUrlEl = document.getElementById('join-url');
       const copyBtn   = document.getElementById('copy-btn');
 
-      // קוד חדר אם עבר ב-URL
       let ROOM = new URL(location.href).searchParams.get('room') || '';
       if (ROOM) {
         roomPill.textContent = ROOM;
         joinUrlEl.textContent = location.origin + '/join.html?room=' + encodeURIComponent(ROOM);
       }
 
-      // אם לקוח socket.io לא נטען מהשרת – נטען מגיבוי CDN
       function ensureIoLoaded() {
         return new Promise((resolve) => {
           if (typeof io !== 'undefined') return resolve();
           const s = document.createElement('script');
           s.src = 'https://cdn.socket.io/4.7.5/socket.io.min.js';
           s.onload = () => resolve();
-          s.onerror = () => { log('socket.io client failed to load'); resolve(); };
+          s.onerror = () => resolve();
           document.head.appendChild(s);
         });
       }
 
-      // יצירת חדר אם אין אחד ב-URL
       async function ensureRoom() {
         if (ROOM) return ROOM;
-        try {
-          const res = await fetch('/api/new-room');
-          const data = await res.json();
-          ROOM = data.room;
-          const url = new URL(location.href);
-          url.searchParams.set('room', ROOM);
-          history.replaceState({}, '', url);
-          roomPill.textContent = ROOM;
-          joinUrlEl.textContent = location.origin + '/join.html?room=' + encodeURIComponent(ROOM);
-          return ROOM;
-        } catch (e) {
-          log('failed to fetch new room', e);
-          alert('בעיה ביצירת חדר. רעננו את הדף ונסו שוב.');
-        }
+        const res = await fetch('/api/new-room', { cache: 'no-store' });
+        const data = await res.json();
+        ROOM = data.room;
+        const url = new URL(window.location.href);
+        url.searchParams.set('room', ROOM);
+        history.replaceState({}, '', url);
+        roomPill.textContent = ROOM;
+        joinUrlEl.textContent = location.origin + '/join.html?room=' + encodeURIComponent(ROOM);
+        return ROOM;
       }
 
       function participantLink(room){
@@ -107,7 +96,7 @@
           if (it.bg)    el.style.background = it.bg;
           if (it.color) el.style.color      = it.color;
           const name = document.createElement('div');
-          name.className = 'name';         // פונט עבה יותר, ממורכז (מה-CSS)
+          name.className = 'name';
           name.textContent = it.name || '';
           el.appendChild(name);
         }
@@ -137,7 +126,6 @@
       (async function init(){
         await ensureIoLoaded();
         await ensureRoom();
-        log('ROOM =', ROOM);
 
         socket = io();
         socket.emit('joinRoom', { room: ROOM, role: 'host' });
@@ -156,8 +144,19 @@
         });
 
         document.getElementById('new-room').addEventListener('click', async function(){
-          ROOM = '';
-          await ensureRoom();
+          // איפוס מיידי בצד הלקוח
+          document.getElementById('question-display').textContent = 'אין שאלה עדיין…';
+          clearCards();
+
+          try {
+            const res = await fetch('/api/new-room', { cache: 'no-store' });
+            const data = await res.json();
+            const url  = new URL(window.location.href);
+            url.searchParams.set('room', data.room);
+            window.location.replace(url.toString());
+          } catch (e) {
+            alert('לא הצלחתי ליצור חדר חדש. נסה שוב.');
+          }
         });
 
         copyBtn.addEventListener('click', async function(){
@@ -200,3 +199,4 @@
   </script>
 </body>
 </html>
+
