@@ -11,7 +11,6 @@
 <body>
   <div class="container">
     <div class="question" id="question-display">אין שאלה עדיין…</div>
-
     <div id="board" class="board" aria-label="לוח תשובות"></div>
 
     <div class="form" style="position:fixed;bottom:10px;right:10px;gap:5px;width:auto">
@@ -26,6 +25,7 @@
       const board = document.getElementById('board');
       let ROOM = new URL(location.href).searchParams.get('room') || '';
       let socket, Z = 1;
+      let currentPrefs = { showNamesOnBoard: true };
 
       function ensureIoLoaded() {
         return new Promise((resolve) => {
@@ -38,6 +38,14 @@
         });
       }
 
+      function applyTitleStyleToDom(style){
+        const titles = document.querySelectorAll('.card.title');
+        titles.forEach(el => {
+          if (style.titleBg) el.style.background = style.titleBg;
+          if (style.titleColor) el.style.color = style.titleColor;
+        });
+      }
+
       function createCard(it, prefs){
         const el = document.createElement('div');
         el.className = 'card' + (it.kind === 'title' ? ' title' : '');
@@ -47,14 +55,17 @@
         el.style.width  = (it.width||280) + 'px';
         el.style.height = (it.height||100) + 'px';
         el.style.zIndex = it.z || 1;
+
         if (it.bg) el.style.background = it.bg;
         if (it.color) el.style.color = it.color;
         if (it.borderColor) el.style.borderColor = it.borderColor;
 
-        if (it.kind === 'answer' && prefs?.showNamesOnBoard) {
+        if (it.kind === 'answer') {
+          // תמיד ליצור אלמנט שם, ולהחביא/להציג לפי prefs
           const name = document.createElement('div');
           name.className = 'name';
           name.textContent = it.name || '';
+          name.style.display = (prefs && prefs.showNamesOnBoard) ? '' : 'none';
           el.appendChild(name);
         }
 
@@ -125,15 +136,19 @@
 
         socket.on('state', ({ question, items, style, prefs }) => {
           document.getElementById('question-display').textContent = question || 'אין שאלה עדיין…';
-          clearCards(); (items||[]).forEach(it => createCard(it, prefs));
-          if (style) board.style.background = style.boardBg;
+          currentPrefs = prefs || currentPrefs;
+          clearCards(); (items||[]).forEach(it => createCard(it, currentPrefs));
+          if (style) {
+            board.style.background = style.boardBg;
+            applyTitleStyleToDom(style);
+          }
         });
 
         socket.on('question', (q) => {
           document.getElementById('question-display').textContent = q || 'אין שאלה עדיין…';
         });
         socket.on('clearItems', clearCards);
-        socket.on('newItem', (it)=>createCard(it));
+        socket.on('newItem', (it)=>createCard(it, currentPrefs));
         socket.on('moveItem', ({id,x,y,z})=>{
           const el=document.getElementById('item-'+id);
           if(el){ el.style.left=x+'px'; el.style.top=y+'px'; el.style.zIndex=z; }
@@ -143,12 +158,16 @@
           if(el){ el.style.width=width+'px'; el.style.height=height+'px'; }
         });
         socket.on('roomStyle', (style)=>{
-          if (style) board.style.background = style.boardBg;
+          if (!style) return;
+          board.style.background = style.boardBg || getComputedStyle(board).backgroundColor;
+          applyTitleStyleToDom(style);
         });
         socket.on('boardPrefs', (prefs)=>{
-          // הסתר/הצג שמות לפי העדפת המנחה
-          document.querySelectorAll('.card.answer .name').forEach(nameEl=>{
-            nameEl.style.display = prefs.showNamesOnBoard ? '' : 'none';
+          if (!prefs) return;
+          currentPrefs = { ...currentPrefs, ...prefs };
+          // הצגה/הסתרה של כל שמות המשתתפים הקיימים
+          document.querySelectorAll('.card .name').forEach(nameEl=>{
+            nameEl.style.display = currentPrefs.showNamesOnBoard ? '' : 'none';
           });
         });
       }

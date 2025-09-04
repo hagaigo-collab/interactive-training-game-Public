@@ -35,7 +35,7 @@
       <button id="add-title" class="button">הוסף כותרת</button>
     </div>
 
-    <!-- בוחרי צבעים -->
+    <!-- בוחרי צבעים והעדפות -->
     <div class="form" style="grid-template-columns: auto auto auto auto; margin-top:10px">
       <label>צבע רקע לוח <input type="color" id="boardBg" value="#ffffff"></label>
       <label>צבע כותרת <input type="color" id="titleBg" value="#FFEB3B"></label>
@@ -58,6 +58,11 @@
       const joinUrlEl = document.getElementById('join-url');
       const copyBtn   = document.getElementById('copy-btn');
       const copyBoardBtn = document.getElementById('copy-board-btn');
+
+      const boardBgInput  = document.getElementById('boardBg');
+      const titleBgInput  = document.getElementById('titleBg');
+      const titleClrInput = document.getElementById('titleColor');
+      const toggleNamesEl = document.getElementById('toggle-names');
 
       let ROOM = new URL(location.href).searchParams.get('room') || '';
       if (ROOM) {
@@ -92,12 +97,21 @@
       function participantLink(room){
         return location.origin + '/join.html?room=' + encodeURIComponent(room);
       }
-
       function boardLink(room){
         return location.origin + '/board.html?room=' + encodeURIComponent(room);
       }
 
       let socket, Z = 1;
+
+      function applyTitleStyleToDom(style){
+        // עדכון כל הכותרות הקיימות לפי הסטייל הנוכחי
+        const titles = document.querySelectorAll('.card.title');
+        titles.forEach(el => {
+          if (style.titleBg) el.style.background = style.titleBg;
+          if (style.titleColor) el.style.color = style.titleColor;
+        });
+      }
+
       function createCard(it){
         const el = document.createElement('div');
         el.className = 'card' + (it.kind === 'title' ? ' title' : '');
@@ -108,10 +122,12 @@
         el.style.height = (it.height||100) + 'px';
         el.style.zIndex = it.z || 1;
 
+        // צבעים לפי מה שמגיע מהשרת
+        if (it.bg)    el.style.background = it.bg;
+        if (it.color) el.style.color      = it.color;
+        if (it.borderColor) el.style.borderColor = it.borderColor;
+
         if (it.kind === 'answer') {
-          if (it.bg)    el.style.background = it.bg;
-          if (it.color) el.style.color      = it.color;
-          if (it.borderColor) el.style.borderColor = it.borderColor;
           const name = document.createElement('div');
           name.className = 'name';
           name.textContent = it.name || '';
@@ -183,6 +199,7 @@
         socket = io();
         socket.emit('joinRoom', { room: ROOM, role: 'host' });
 
+        // שליחה/הוספה
         document.getElementById('send-question').addEventListener('click', function(){
           const q = document.getElementById('question').value.trim();
           socket.emit('setQuestion', { room: ROOM, question: q });
@@ -196,6 +213,7 @@
           document.getElementById('titleText').value = '';
         });
 
+        // יצירת חדר חדש
         document.getElementById('new-room').addEventListener('click', async function(){
           document.getElementById('question-display').textContent = 'אין שאלה עדיין…';
           clearCards();
@@ -210,6 +228,7 @@
           }
         });
 
+        // העתקים
         copyBtn.addEventListener('click', async function(){
           try {
             await navigator.clipboard.writeText(participantLink(ROOM));
@@ -217,7 +236,6 @@
             setTimeout(()=> copyBtn.textContent = 'העתק קישור למשתתפים', 1200);
           } catch (e) {}
         });
-
         copyBoardBtn.addEventListener('click', async function(){
           try {
             await navigator.clipboard.writeText(boardLink(ROOM));
@@ -226,6 +244,7 @@
           } catch (e) {}
         });
 
+        // יצוא PNG
         document.getElementById('export-png').addEventListener('click', async function(){
           const node = document.getElementById('board');
           const q = document.getElementById('question-display').textContent.trim();
@@ -239,24 +258,37 @@
           link.click();
         });
 
-        // שינוי צבעים והעדפות
-        document.getElementById('boardBg').addEventListener('input', (e)=>{
+        // שינוי צבעים/העדפות – שליחה לשרת
+        boardBgInput.addEventListener('input', (e)=>{
           socket.emit('setRoomStyle', { room: ROOM, style: { boardBg: e.target.value } });
         });
-        document.getElementById('titleBg').addEventListener('input', (e)=>{
+        titleBgInput.addEventListener('input', (e)=>{
           socket.emit('setRoomStyle', { room: ROOM, style: { titleBg: e.target.value } });
         });
-        document.getElementById('titleColor').addEventListener('input', (e)=>{
+        titleClrInput.addEventListener('input', (e)=>{
           socket.emit('setRoomStyle', { room: ROOM, style: { titleColor: e.target.value } });
         });
-        document.getElementById('toggle-names').addEventListener('change', (e)=>{
+        toggleNamesEl.addEventListener('change', (e)=>{
           socket.emit('setBoardPrefs', { room: ROOM, prefs: { showNamesOnBoard: e.target.checked } });
         });
 
+        // קבלת מצב התחלתי
         socket.on('state', ({ question, items, style, prefs }) => {
           document.getElementById('question-display').textContent = question || 'אין שאלה עדיין…';
           clearCards(); (items||[]).forEach(createCard);
-          if (style) board.style.background = style.boardBg;
+
+          if (style) {
+            board.style.background = style.boardBg;
+            // לסנכרן את הערכים בבוחרי הצבע
+            if (style.boardBg)  boardBgInput.value  = style.boardBg;
+            if (style.titleBg)  titleBgInput.value  = style.titleBg;
+            if (style.titleColor) titleClrInput.value = style.titleColor;
+            // לעדכן כותרות קיימות לפי הסטייל
+            applyTitleStyleToDom(style);
+          }
+          if (prefs) {
+            toggleNamesEl.checked = !!prefs.showNamesOnBoard;
+          }
         });
 
         socket.on('question', (q) => {
@@ -273,10 +305,21 @@
           const el = document.getElementById('item-'+id);
           if (el) { el.style.width = width+'px'; el.style.height = height+'px'; }
         });
+
+        // סגנון חדר – החלה גם על כותרות קיימות + סנכרון קלטים
         socket.on('roomStyle', (style)=>{
-          if (style) {
-            board.style.background = style.boardBg;
-          }
+          if (!style) return;
+          if (style.boardBg)  board.style.background = style.boardBg;
+          if (style.boardBg)  boardBgInput.value  = style.boardBg;
+          if (style.titleBg)  titleBgInput.value  = style.titleBg;
+          if (style.titleColor) titleClrInput.value = style.titleColor;
+          applyTitleStyleToDom(style);
+        });
+
+        // העדפת שמות – לעדכן את המתג אם השתנה מרחוק
+        socket.on('boardPrefs', (prefs)=>{
+          if (!prefs) return;
+          toggleNamesEl.checked = !!prefs.showNamesOnBoard;
         });
       })();
     })();
