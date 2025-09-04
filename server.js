@@ -1,110 +1,157 @@
-import express from 'express';
-import http from 'http';
-import { Server } from 'socket.io';
-import { customAlphabet } from 'nanoid';
+const express = require('express');
+const http = require('http');
+const { Server } = require('socket.io');
+const path = require('path');
+const crypto = require('crypto');
 
 const app = express();
 const server = http.createServer(app);
-const io = new Server(server, { cors: { origin: '*' } });
+const io = new Server(server);
 
-app.use(express.static('public'));
+app.use(express.static(path.join(__dirname, 'public')));
 
-// room: { question: string, items: Map(id -> item) }
-// item (תשובה): { id, kind:'answer', name, text, bg, color, x, y }
-// item (כותרת): { id, kind:'title', text, x, y }
+// מצב חדרים
 const rooms = new Map();
-const nanoid = customAlphabet('ABCDEFGHJKLMNPQRSTUVWXYZ23456789', 4);
 
-function ensureRoom(room){
-  if (!rooms.has(room)) rooms.set(room, { question: '', items: new Map() });
-  return rooms.get(room);
+function makeRoomCode() {
+  return crypto.randomBytes(2).toString('hex').toUpperCase();
 }
 
 app.get('/api/new-room', (req, res) => {
-  let code;
-  do { code = nanoid(); } while (rooms.has(code));
-  rooms.set(code, { question: '', items: new Map() });
-  res.json({ room: code });
+  const room = makeRoomCode();
+  rooms.set(room, {
+    question: '',
+    items: new Map(),
+    style: {
+      boardBg: '#ffffff',
+      titleBg: '#FFEB3B',
+      titleColor: '#000000',
+    },
+    prefs: {
+      showNamesOnBoard: true,
+    },
+  });
+  res.json({ room });
 });
 
 io.on('connection', (socket) => {
   socket.on('joinRoom', ({ room, role }) => {
-    if (!room) return;
-    socket.join(room);
-    const state = ensureRoom(room);
-    if (role === 'host') {
-      socket.emit('state', {
-        question: state.question,
-        items: Array.from(state.items.values())
+    if (!rooms.has(room)) {
+      rooms.set(room, {
+        question: '',
+        items: new Map(),
+        style: {
+          boardBg: '#ffffff',
+          titleBg: '#FFEB3B',
+          titleColor: '#000000',
+        },
+        prefs: { showNamesOnBoard: true },
       });
-    } else {
-      socket.emit('question', state.question);
     }
+    socket.join(room);
+    const state = rooms.get(room);
+    socket.emit('state', {
+      question: state.question,
+      items: Array.from(state.items.values()),
+      style: state.style,
+      prefs: state.prefs,
+    });
   });
 
-  // שאלה חדשה – מוחק הכל (כולל כותרות)
   socket.on('setQuestion', ({ room, question }) => {
-    const state = ensureRoom(room);
-    state.question = String(question || '').trim();
+    const state = rooms.get(room);
+    if (!state) return;
+    state.question = question;
     state.items.clear();
-    io.to(room).emit('question', state.question);
+    io.to(room).emit('question', question);
     io.to(room).emit('clearItems');
   });
 
-  // תשובת משתתף
-  socket.on('submitAnswer', ({ room, name, text, bg, color }) => {
+  socket.on('submitAnswer', ({ room, name, text, bg, color, borderColor }) => {
     const state = rooms.get(room);
     if (!state) return;
-    const cleanName = String(name || '').trim().slice(0, 40);
-    const cleanText = String(text || '').trim().slice(0, 280);
-    if (!cleanName || !cleanText) return;
-
-    const id = `${Date.now()}_${Math.random().toString(36).slice(2,7)}`;
+    const id = crypto.randomBytes(6).toString('hex');
+    // מיקום התחלתי פשוט: פיזור רנדומלי (אפשר לשפר לאלגוריתם "חכם")
+    const x = Math.floor(Math.random() * 400);
+    const y = Math.floor(Math.random() * 300) + 120;
     const item = {
       id,
       kind: 'answer',
-      name: cleanName,
-      text: cleanText,
-      bg: bg || '#FFE082',
-      color: color || '#000000',
-      x: 60 + Math.floor(Math.random() * 420),
-      y: 180 + Math.floor(Math.random() * 280)
+      name,
+      text,
+      bg,
+      color,
+      borderColor,
+      x,
+      y,
+      width: 280,
+      height: 100,
+      z: 1,
     };
     state.items.set(id, item);
     io.to(room).emit('newItem', item);
   });
 
-  // כותרת של המנחה
   socket.on('addTitle', ({ room, text }) => {
     const state = rooms.get(room);
     if (!state) return;
-    const cleanText = String(text || '').trim().slice(0, 80);
-    if (!cleanText) return;
-
-    const id = `${Date.now()}_${Math.random().toString(36).slice(2,7)}`;
+    const id = crypto.randomBytes(6).toString('hex');
+    const x = 20;
+    const y = 80;
     const item = {
       id,
       kind: 'title',
-      text: cleanText,
-      // צבעים קבועים לכותרת
-      x: 40 + Math.floor(Math.random() * 480),
-      y: 140 + Math.floor(Math.random() * 180)
+      text,
+      bg: state.style.titleBg,
+      color: state.style.titleColor,
+      borderColor: '#000000',
+      x,
+      y,
+      width: 320,
+      height: 80,
+      z: 1,
     };
     state.items.set(id, item);
     io.to(room).emit('newItem', item);
   });
 
-  // גרירת פריט (גם תשובה וגם כותרת)
   socket.on('moveItem', ({ room, id, x, y }) => {
     const state = rooms.get(room);
     if (!state) return;
-    const it = state.items.get(id);
-    if (!it) return;
-    it.x = Math.max(0, Math.min(2000, x|0));
-    it.y = Math.max(0, Math.min(2000, y|0));
-    io.to(room).emit('moveItem', { id, x: it.x, y: it.y });
+    const item = state.items.get(id);
+    if (!item) return;
+    item.x = x;
+    item.y = y;
+    item.z = (item.z || 1) + 1;
+    io.to(room).emit('moveItem', { id, x, y, z: item.z });
+  });
+
+  socket.on('resizeItem', ({ room, id, width, height }) => {
+    const state = rooms.get(room);
+    if (!state) return;
+    const item = state.items.get(id);
+    if (!item) return;
+    item.width = width;
+    item.height = height;
+    io.to(room).emit('resizeItem', { id, width, height });
+  });
+
+  socket.on('setRoomStyle', ({ room, style }) => {
+    const state = rooms.get(room);
+    if (!state) return;
+    state.style = { ...state.style, ...style };
+    io.to(room).emit('roomStyle', state.style);
+  });
+
+  socket.on('setBoardPrefs', ({ room, prefs }) => {
+    const state = rooms.get(room);
+    if (!state) return;
+    state.prefs = { ...state.prefs, ...prefs };
+    io.to(room).emit('boardPrefs', state.prefs);
   });
 });
 
 const PORT = process.env.PORT || 3000;
-server.listen(PORT, () => console.log(`Server running on http://localhost:${PORT}`));
+server.listen(PORT, () => {
+  console.log(`Server running on http://localhost:${PORT}`);
+});

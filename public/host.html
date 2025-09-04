@@ -15,6 +15,7 @@
       <span class="meta">חדר: <span id="room-pill" class="pill">—</span></span>
       <span class="meta copy-link">
         <button id="copy-btn" class="button ghost">העתק קישור למשתתפים</button>
+        <button id="copy-board-btn" class="button ghost">קישור ללוח התצוגה</button>
         <span class="small" id="join-url"></span>
       </span>
     </div>
@@ -34,11 +35,19 @@
       <button id="add-title" class="button">הוסף כותרת</button>
     </div>
 
+    <!-- בוחרי צבעים -->
+    <div class="form" style="grid-template-columns: auto auto auto auto; margin-top:10px">
+      <label>צבע רקע לוח <input type="color" id="boardBg" value="#ffffff"></label>
+      <label>צבע כותרת <input type="color" id="titleBg" value="#FFEB3B"></label>
+      <label>צבע טקסט כותרת <input type="color" id="titleColor" value="#000000"></label>
+      <label><input type="checkbox" id="toggle-names" checked> הצג שמות בלוח</label>
+    </div>
+
     <div class="question" id="question-display">אין שאלה עדיין…</div>
 
     <div>
       <div id="board" class="board" aria-label="לוח תשובות"></div>
-      <p class="small">גררו מלבנים עם העכבר. שליחת שאלה חדשה מאפסת את הלוח.</p>
+      <p class="small">גררו מלבנים עם העכבר או שנו את גודלם. שליחת שאלה חדשה מאפסת את הלוח.</p>
     </div>
   </div>
 
@@ -48,6 +57,7 @@
       const roomPill  = document.getElementById('room-pill');
       const joinUrlEl = document.getElementById('join-url');
       const copyBtn   = document.getElementById('copy-btn');
+      const copyBoardBtn = document.getElementById('copy-board-btn');
 
       let ROOM = new URL(location.href).searchParams.get('room') || '';
       if (ROOM) {
@@ -83,18 +93,25 @@
         return location.origin + '/join.html?room=' + encodeURIComponent(room);
       }
 
-      let socket, Z = 1;
+      function boardLink(room){
+        return location.origin + '/board.html?room=' + encodeURIComponent(room);
+      }
 
+      let socket, Z = 1;
       function createCard(it){
         const el = document.createElement('div');
         el.className = 'card' + (it.kind === 'title' ? ' title' : '');
         el.id = 'item-' + it.id;
         el.style.left = (it.x||0) + 'px';
         el.style.top  = (it.y||0) + 'px';
+        el.style.width  = (it.width||280) + 'px';
+        el.style.height = (it.height||100) + 'px';
+        el.style.zIndex = it.z || 1;
 
         if (it.kind === 'answer') {
           if (it.bg)    el.style.background = it.bg;
           if (it.color) el.style.color      = it.color;
+          if (it.borderColor) el.style.borderColor = it.borderColor;
           const name = document.createElement('div');
           name.className = 'name';
           name.textContent = it.name || '';
@@ -105,22 +122,58 @@
         p.textContent = it.text || '';
         el.appendChild(p);
 
-        enableDrag(el, it.id);
+        enableDragResize(el, it.id);
         board.appendChild(el);
       }
 
       function clearCards(){ board.innerHTML = ''; }
 
-      function enableDrag(el, id){
-        let dragging=false, sx=0, sy=0, ox=0, oy=0;
-        const down = (e)=>{ dragging=true; el.setPointerCapture(e.pointerId); sx=e.clientX; sy=e.clientY; ox=parseInt(el.style.left)||0; oy=parseInt(el.style.top)||0; el.style.zIndex=(++Z)+''; };
-        const move = (e)=>{ if(!dragging) return; const dx=e.clientX-sx, dy=e.clientY-sy; const rect=board.getBoundingClientRect(), er=el.getBoundingClientRect(); let nx=ox+dx, ny=oy+dy; nx=Math.max(0,Math.min(rect.width-er.width,nx)); ny=Math.max(0,Math.min(rect.height-er.height,ny)); el.style.left=nx+'px'; el.style.top=ny+'px'; };
-        const up   = (e)=>{ if(!dragging) return; dragging=false; el.releasePointerCapture(e.pointerId); const x=parseInt(el.style.left)||0, y=parseInt(el.style.top)||0; socket.emit('moveItem', { room: ROOM, id, x, y }); };
-        el.addEventListener('pointerdown', down);
-        el.addEventListener('pointermove', move);
-        el.addEventListener('pointerup', up);
-        el.addEventListener('pointercancel', up);
-        el.addEventListener('lostpointercapture', up);
+      function enableDragResize(el, id){
+        let dragging=false, resizing=false, sx=0, sy=0, ox=0, oy=0, ow=0, oh=0;
+        const handle = document.createElement('div');
+        handle.className = 'resize-handle';
+        el.appendChild(handle);
+
+        el.addEventListener('pointerdown', (e)=>{
+          if (e.target === handle) {
+            resizing = true;
+            el.setPointerCapture(e.pointerId);
+            sx=e.clientX; sy=e.clientY;
+            ow=parseInt(el.style.width)||280;
+            oh=parseInt(el.style.height)||100;
+          } else {
+            dragging=true;
+            el.setPointerCapture(e.pointerId);
+            sx=e.clientX; sy=e.clientY;
+            ox=parseInt(el.style.left)||0;
+            oy=parseInt(el.style.top)||0;
+            el.style.zIndex=(++Z)+'';
+          }
+        });
+        el.addEventListener('pointermove', (e)=>{
+          if(dragging){
+            const dx=e.clientX-sx, dy=e.clientY-sy;
+            el.style.left=(ox+dx)+'px';
+            el.style.top=(oy+dy)+'px';
+          }
+          if(resizing){
+            const dx=e.clientX-sx, dy=e.clientY-sy;
+            el.style.width=(Math.max(200,ow+dx))+'px';
+            el.style.height=(Math.max(64,oh+dy))+'px';
+          }
+        });
+        el.addEventListener('pointerup', (e)=>{
+          if(dragging){
+            dragging=false;
+            const x=parseInt(el.style.left)||0, y=parseInt(el.style.top)||0;
+            socket.emit('moveItem', { room: ROOM, id, x, y });
+          }
+          if(resizing){
+            resizing=false;
+            const width=parseInt(el.style.width)||280, height=parseInt(el.style.height)||100;
+            socket.emit('resizeItem', { room: ROOM, id, width, height });
+          }
+        });
       }
 
       (async function init(){
@@ -144,10 +197,8 @@
         });
 
         document.getElementById('new-room').addEventListener('click', async function(){
-          // איפוס מיידי בצד הלקוח
           document.getElementById('question-display').textContent = 'אין שאלה עדיין…';
           clearCards();
-
           try {
             const res = await fetch('/api/new-room', { cache: 'no-store' });
             const data = await res.json();
@@ -167,10 +218,19 @@
           } catch (e) {}
         });
 
+        copyBoardBtn.addEventListener('click', async function(){
+          try {
+            await navigator.clipboard.writeText(boardLink(ROOM));
+            copyBoardBtn.textContent = 'הועתק!';
+            setTimeout(()=> copyBoardBtn.textContent = 'קישור ללוח התצוגה', 1200);
+          } catch (e) {}
+        });
+
         document.getElementById('export-png').addEventListener('click', async function(){
           const node = document.getElementById('board');
           const q = document.getElementById('question-display').textContent.trim();
-          const canvas = await html2canvas(node, { backgroundColor: '#ffffff', scale: 2 });
+          const bg = getComputedStyle(board).backgroundColor;
+          const canvas = await html2canvas(node, { backgroundColor: bg, scale: 3 });
           const link = document.createElement('a');
           let name = 'board_' + ROOM + '_' + Date.now() + (q ? '_' + q.slice(0,30) : '') + '.png';
           name = name.split(' ').join('_');
@@ -179,9 +239,24 @@
           link.click();
         });
 
-        socket.on('state', ({ question, items }) => {
+        // שינוי צבעים והעדפות
+        document.getElementById('boardBg').addEventListener('input', (e)=>{
+          socket.emit('setRoomStyle', { room: ROOM, style: { boardBg: e.target.value } });
+        });
+        document.getElementById('titleBg').addEventListener('input', (e)=>{
+          socket.emit('setRoomStyle', { room: ROOM, style: { titleBg: e.target.value } });
+        });
+        document.getElementById('titleColor').addEventListener('input', (e)=>{
+          socket.emit('setRoomStyle', { room: ROOM, style: { titleColor: e.target.value } });
+        });
+        document.getElementById('toggle-names').addEventListener('change', (e)=>{
+          socket.emit('setBoardPrefs', { room: ROOM, prefs: { showNamesOnBoard: e.target.checked } });
+        });
+
+        socket.on('state', ({ question, items, style, prefs }) => {
           document.getElementById('question-display').textContent = question || 'אין שאלה עדיין…';
           clearCards(); (items||[]).forEach(createCard);
+          if (style) board.style.background = style.boardBg;
         });
 
         socket.on('question', (q) => {
@@ -190,13 +265,21 @@
 
         socket.on('clearItems', clearCards);
         socket.on('newItem', (it) => createCard(it));
-        socket.on('moveItem', ({id,x,y}) => {
+        socket.on('moveItem', ({id,x,y,z}) => {
           const el = document.getElementById('item-'+id);
-          if (el) { el.style.left = x + 'px'; el.style.top = y + 'px'; }
+          if (el) { el.style.left = x + 'px'; el.style.top = y + 'px'; el.style.zIndex=z; }
+        });
+        socket.on('resizeItem', ({id,width,height})=>{
+          const el = document.getElementById('item-'+id);
+          if (el) { el.style.width = width+'px'; el.style.height = height+'px'; }
+        });
+        socket.on('roomStyle', (style)=>{
+          if (style) {
+            board.style.background = style.boardBg;
+          }
         });
       })();
     })();
   </script>
 </body>
 </html>
-

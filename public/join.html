@@ -24,14 +24,12 @@
     <div class="question" id="question-display">ממתין לשאלה מהמנחה…</div>
 
     <div class="form">
-      <div>
-        <label>צבע מלבן</label>
-        <input id="bg" type="color" class="input" value="#FFECB3" />
-      </div>
-      <div>
-        <label>צבע טקסט</label>
-        <input id="color" type="color" class="input" value="#000000" />
-      </div>
+      <button id="choose-theme" class="button">בחירת עיצוב ▾</button>
+    </div>
+
+    <div id="theme-palette" class="palette hidden"></div>
+
+    <div class="form">
       <input id="text" class="input" placeholder="כתבו כאן את התשובה שלכם" />
       <button id="send" class="button">שלח תשובה</button>
     </div>
@@ -42,12 +40,33 @@
   <script>
     const socket = io();
 
+    let ROOM = '';
+    let CURRENT_THEME = null;
+
+    // מערך themes מוגדר מראש (דוגמאות של 16 עיצובים)
+    const THEMES = [
+      { bg:'#f5f5dc', borderColor:'#8b7355', color:'#000000' },
+      { bg:'#e0f7fa', borderColor:'#0288d1', color:'#004d60' },
+      { bg:'#fff9c4', borderColor:'#fbc02d', color:'#000000' },
+      { bg:'#c8e6c9', borderColor:'#2e7d32', color:'#1b5e20' },
+      { bg:'#f8bbd0', borderColor:'#ad1457', color:'#4a0d2c' },
+      { bg:'#ce93d8', borderColor:'#6a1b9a', color:'#ffffff' },
+      { bg:'#ffe0b2', borderColor:'#ef6c00', color:'#000000' },
+      { bg:'#b2ebf2', borderColor:'#0097a7', color:'#004d60' },
+      { bg:'#eeeeee', borderColor:'#9e9e9e', color:'#000000' },
+      { bg:'#ffffff', borderColor:'#000000', color:'#000000' },
+      { bg:'#1a237e', borderColor:'#0d133d', color:'#ffffff' },
+      { bg:'#827717', borderColor:'#3e2723', color:'#f5f5dc' },
+      { bg:'#fff8e1', borderColor:'#ffb300', color:'#000000' },
+      { bg:'#880e4f', borderColor:'#4a0d2c', color:'#ffffff' },
+      { bg:'#a1887f', borderColor:'#5d4037', color:'#ffffff' },
+      { bg:'#b3e5fc', borderColor:'#0288d1', color:'#000000' }
+    ];
+
     function getParam(name) {
       const url = new URL(window.location.href);
       return url.searchParams.get(name);
     }
-
-    let ROOM = '';
 
     function connect(room){
       ROOM = room.trim().toUpperCase();
@@ -55,13 +74,35 @@
       socket.emit('joinRoom', { room: ROOM, role: 'participant' });
     }
 
-    (function init(){
-      const fromUrl = getParam('room');
-      if (fromUrl) {
-        document.getElementById('room').value = fromUrl;
-        connect(fromUrl);
+    // בונה את הפלטה
+    function buildPalette(){
+      const palette = document.getElementById('theme-palette');
+      palette.innerHTML = '';
+      THEMES.forEach((th, idx)=>{
+        const opt = document.createElement('div');
+        opt.className = 'theme-option';
+        opt.style.background = th.bg;
+        opt.style.border = '2px solid ' + th.borderColor;
+        opt.style.color = th.color;
+        opt.textContent = 'א';
+        opt.addEventListener('click', ()=>{
+          CURRENT_THEME = th;
+          localStorage.setItem('themeChoice', JSON.stringify(th));
+          palette.classList.add('hidden');
+        });
+        palette.appendChild(opt);
+      });
+    }
+
+    document.getElementById('choose-theme').addEventListener('click', ()=>{
+      const palette = document.getElementById('theme-palette');
+      if (palette.classList.contains('hidden')) {
+        buildPalette();
+        palette.classList.remove('hidden');
+      } else {
+        palette.classList.add('hidden');
       }
-    })();
+    });
 
     document.getElementById('join').addEventListener('click', () => {
       const r = document.getElementById('room').value;
@@ -72,22 +113,33 @@
       document.getElementById('question-display').textContent = q || 'ממתין לשאלה מהמנחה…';
     });
 
-    socket.on('clearItems', () => {
-      // אין לוח בצד משתתף, לא צריך למחוק
-    });
+    socket.on('clearItems', () => {});
 
     document.getElementById('send').addEventListener('click', () => {
       if (!ROOM) return alert('לא מחוברים לחדר');
       const text = document.getElementById('text').value.trim();
       const name = document.getElementById('name').value.trim();
-      const bg = document.getElementById('bg').value;
-      const color = document.getElementById('color').value;
       if (!name) return alert('נא להזין שם');
       if (!text) return;
-      socket.emit('submitAnswer', { room: ROOM, name, text, bg, color });
+      if (!CURRENT_THEME) {
+        // אם לא בחר, בחר רנדומלית
+        CURRENT_THEME = THEMES[Math.floor(Math.random()*THEMES.length)];
+      }
+      socket.emit('submitAnswer', { room: ROOM, name, text, bg: CURRENT_THEME.bg, color: CURRENT_THEME.color, borderColor: CURRENT_THEME.borderColor });
       document.getElementById('text').value = '';
       document.getElementById('text').focus();
     });
+
+    (function init(){
+      const fromUrl = getParam('room');
+      if (fromUrl) {
+        document.getElementById('room').value = fromUrl;
+        connect(fromUrl);
+      }
+      // טען theme מה־localStorage
+      const saved = localStorage.getItem('themeChoice');
+      if (saved) CURRENT_THEME = JSON.parse(saved);
+    })();
   </script>
 </body>
 </html>
